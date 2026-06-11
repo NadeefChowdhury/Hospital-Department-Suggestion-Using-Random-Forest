@@ -101,11 +101,11 @@ st.markdown("""
     border-radius: 12px; padding: 1.5rem; margin-top: 1rem;
   }
   .dept-name { font-size: 28px; font-weight: 700; letter-spacing: -0.5px; margin: 0; }
-  .dept-sub { color: #64748b; font-size: 14px; margin-top: 2px; }
+  .dept-sub { color: #64748b; font-size: 30px; margin-top: 2px; }
   .low-conf-box {
     background: #fffbeb; border: 1px solid #fcd34d;
     border-radius: 8px; padding: 10px 14px;
-    font-size: 13px; color: #92400e; margin-top: 1rem; line-height: 1.6;
+    font-size: 22px; color: #92400e; margin-top: 1rem; line-height: 1.6;
   }
   .top3-row {
     display: flex; justify-content: space-between; align-items: center;
