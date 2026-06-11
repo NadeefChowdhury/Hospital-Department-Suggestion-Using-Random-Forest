@@ -1,159 +1,193 @@
-"""
-SciBlitz AI Challenge 2026: Live Triage Interface
-Author: Senior Machine Learning Engineer & Medical Informatics Specialist
-Description: Streamlit UI layer mapping 23 continuous symptom sliders to the
-             localized Bangladesh Random Forest diagnostic core.
-"""
-
 import streamlit as st
-import numpy as np
 import pandas as pd
-from sklearn.ensemble import RandomForestClassifier
-
-# Set page configurations to clean, professional layout
-st.set_page_config(
-    page_title="Intelligent Medical Triage Engine",
-    page_icon="🏥",
-    layout="wide"
-)
-
-# =====================================================================
-# 1. CACHED MODEL TRAINING CORE (Ensures instant UI hot-reloads)
-# =====================================================================
-@st.cache_resource
-def load_and_train_pipeline():
-    """Reads dataset and fits the continuous ensemble model once."""
-    if not os.path.exists("bangladesh_triage_dataset.csv"):
-        return None, None
-    
-    df = pd.read_csv("bangladesh_triage_dataset.csv")
-    df.columns = df.columns.str.strip()
-    
-    X = df.drop(columns=['target_department'])
-    y = df['target_department'].str.strip()
-    feature_cols = X.columns.tolist()
-    
-    # Train the exact optimized continuous architecture
-    model = RandomForestClassifier(
-        n_estimators=200, max_depth=20, 
-        criterion='entropy', random_state=42, n_jobs=-1
-    )
-    model.fit(X, y)
-    return model, feature_cols
-
+import numpy as np
+import pickle
 import os
-model, feature_columns = load_and_train_pipeline()
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.model_selection import train_test_split
 
-# Handle missing file state gracefully
-if model is None:
-    st.error("❌ Critical System Error: 'bangladesh_triage_dataset.csv' not found in current execution directory.")
-    st.stop()
+# =========================
+# CONFIG
+# =========================
+RANDOM_STATE = 42
+TEST_SIZE = 0.2
+CONFIDENCE_THRESHOLD = 0.55
+MODEL_PATH = "model.pkl"
+DATA_PATH = "bangladesh_triage_dataset.csv"
 
-# =====================================================================
-# 2. UI HEADER & HOSPITAL BRANDING
-# =====================================================================
-st.title("🏥 Intelligent Medical Triage System")
-st.subheader("SciBlitz AI Challenge 2026 — Advanced Continuous Intensity Protocol")
-st.markdown("""
-*Instead of restrictive checkboxes, patients adjust sliders from **0.0 (Absent)** to **1.0 (Severe/Extreme)**. 
-The continuous decision criteria engine optimizes triage classification based on precise physical intensity layers.*
-""")
-st.write("---")
+SYMPTOM_COLUMNS = [
+    "fever", "cough", "chest_pain", "shortness_of_breath", "headache",
+    "dizziness", "vomiting", "abdominal_pain", "diarrhea", "constipation",
+    "rash", "itching", "joint_pain", "back_pain", "swelling",
+    "urine_problem", "fatigue", "anxiety", "depression", "seizure",
+    "loss_of_consciousness", "sore_throat", "ear_pain"
+]
 
-# Organize screen space: Left for inputs, Right for real-time model outputs
-left_column, right_column = st.columns([3, 2], gap="large")
+DEPT_ICONS = {
+    "Cardiology": "❤️", "Dermatology": "🩺", "ENT": "👂",
+    "Emergency": "🚨", "Gastroenterology": "🫁", "General Medicine": "🏥",
+    "Gynecology": "🌸", "Nephrology": "💧", "Neurology": "🧠",
+    "Orthopedics": "🦴", "Pediatrics": "👶", "Psychiatry": "🧘",
+    "Pulmonology": "🌬️"
+}
 
-# =====================================================================
-# 3. CONVERTING FEATURE SPECTRUMS TO INTERACTIVE SLIDERS (Left Column)
-# =====================================================================
-with left_column:
-    st.markdown("### 📋 Patient Symptom Intake Form")
-    st.caption("Drag the sliders to indicate the true physiological intensity of your current symptoms:")
-    
-    # Clean categorization of the 23 symptoms to make the UI look organized
-    symptom_groups = {
-        "🔴 Systemic & Vital Indicators": ["fever", "fatigue", "dizziness", "loss_of_consciousness"],
-        "🫁 Cardio-Respiratory": ["cough", "chest_pain", "shortness_of_breath", "sore_throat"],
-        "🧠 Neurological & Mental Health": ["headache", "seizure", "anxiety", "depression"],
-        "🤢 Gastrointestinal": ["vomiting", "abdominal_pain", "diarrhea", "constipation"],
-        "🦵 Musculoskeletal & Cutaneous": ["rash", "itching", "joint_pain", "back_pain", "swelling"],
-        "👂 Otolaryngology & Renal": ["urine_problem", "ear_pain"]
-    }
-    
-    # Initialize dictionary to capture runtime user inputs
-    user_inputs = {}
-    
-    # Render sliders dynamically inside collapsible sections for scannability
-    for group_name, symptoms in symptom_groups.items():
-        with st.expander(group_name, expanded=True):
-            cols = st.columns(2)  # Multi-column grid for space optimization
-            for idx, sym in enumerate(symptoms):
-                with cols[idx % 2]:
-                    # Create clean display text from column names (e.g., chest_pain -> Chest Pain)
-                    display_label = sym.replace("_", " ").title()
-                    user_inputs[sym] = st.slider(
-                        label=display_label,
-                        min_value=0.0,
-                        max_value=1.0,
-                        value=0.0,
-                        step=0.05,
-                        key=f"slider_{sym}"
-                    )
+label = lambda s: s.replace("_", " ").title()
 
-# =====================================================================
-# 4. REAL-TIME AI INFERENCE ROUTING & SAFETY WRAPPING (Right Column)
-# =====================================================================
-with right_column:
-    st.markdown("### ⚡ Live AI Engine Assessment")
-    
-    # Reconstruct the user input list into a verified array matches model features order
-    input_vector = [user_inputs[col] for col in feature_columns]
-    vector_parsed = np.array(input_vector).reshape(1, -1)
-    
-    # Run continuous model prediction distributions
-    probabilities = model.predict_proba(vector_parsed)[0]
-    class_labels = model.classes_
-    
-    probability_map = sorted(
-        zip(class_labels, probabilities), key=lambda x: x[1], reverse=True
+
+# =========================
+# MODEL
+# =========================
+@st.cache_resource
+def load_model():
+    if os.path.exists(MODEL_PATH):
+        with open(MODEL_PATH, "rb") as f:
+            return pickle.load(f)
+    df = pd.read_csv(DATA_PATH)
+    X = df.iloc[:, :-1]
+    y = df.iloc[:, -1]
+    X_train, _, y_train, _ = train_test_split(
+        X, y, test_size=TEST_SIZE, stratify=y, random_state=RANDOM_STATE
     )
-    
-    top_dept, top_conf = probability_map[0]
-    
-    # Clinical Safety Catch Threshold (55%)
-    SAFETY_THRESHOLD = 0.55
-    final_routing = top_dept
-    is_overridden = False
-    
-    if top_conf < SAFETY_THRESHOLD:
-        final_routing = "General Medicine"
-        is_overridden = True
-        
-    # --- RENDER RESULTS PANEL ---
-    st.markdown("#### Primary Routed Department Assignment:")
-    
-    if is_overridden:
-        # Warning notification panel for ambiguous cases dropped to General Medicine clearinghouse
-        st.warning(f"⚠️ **{final_routing}** (Safety Override Activated)")
-        st.info(
-            f"**Reason:** The raw engine intent favored *{top_dept}* with a confidence score of "
-            f"**{top_conf*100:.1f}%**, which sits below our clinical safety clearance margin of **55%**. "
-            f"Patient is securely rerouted to General Medicine for direct physical intake verification."
+    model = RandomForestClassifier(
+        n_estimators=200, max_depth=20, criterion="entropy",
+        oob_score=True, random_state=RANDOM_STATE, n_jobs=-1
+    )
+    model.fit(X_train, y_train)
+    with open(MODEL_PATH, "wb") as f:
+        pickle.dump(model, f)
+    return model
+
+
+def predict(model, symptom_values: dict):
+    vector = np.zeros(len(SYMPTOM_COLUMNS))
+    for s, v in symptom_values.items():
+        vector[SYMPTOM_COLUMNS.index(s)] = v
+    probs = model.predict_proba(vector.reshape(1, -1))[0]
+    sorted_idx = np.argsort(probs)[::-1]
+    max_idx = sorted_idx[0]
+    max_prob = float(probs[max_idx])
+    predicted = model.classes_[max_idx]
+    safety_override = False
+    if max_prob < CONFIDENCE_THRESHOLD:
+        predicted = "General Medicine"
+        safety_override = True
+    top_3 = [
+        {"department": model.classes_[i], "probability": round(float(probs[i]), 4)}
+        for i in sorted_idx[:3]
+    ]
+    return predicted, max_prob, safety_override, top_3
+
+
+# =========================
+# PAGE CONFIG
+# =========================
+st.set_page_config(page_title="Triage Assistant", page_icon="🏥", layout="centered")
+
+st.markdown("""
+<style>
+  .block-container { max-width: 760px; padding-top: 2rem; }
+  .badge {
+    display: inline-block;
+    background: #eff6ff; color: #2563eb;
+    font-size: 11px; font-weight: 600;
+    letter-spacing: 0.08em; text-transform: uppercase;
+    padding: 4px 12px; border-radius: 20px; margin-bottom: 0.5rem;
+  }
+  .result-box {
+    background: #f8fafc; border: 1px solid #e2e8f0;
+    border-radius: 12px; padding: 1.5rem; margin-top: 1rem;
+  }
+  .dept-name { font-size: 28px; font-weight: 700; letter-spacing: -0.5px; margin: 0; }
+  .dept-sub { color: #64748b; font-size: 14px; margin-top: 2px; }
+  .safety-box {
+    background: #fffbeb; border: 1px solid #fcd34d;
+    border-radius: 8px; padding: 10px 14px;
+    font-size: 13px; color: #92400e; margin-top: 1rem;
+  }
+  .top3-row {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 8px 0; border-bottom: 1px solid #f1f5f9; font-size: 14px;
+  }
+  .top3-row:last-child { border-bottom: none; }
+  .top3-pct { color: #2563eb; font-weight: 600; font-family: monospace; }
+</style>
+""", unsafe_allow_html=True)
+
+# =========================
+# HEADER
+# =========================
+st.markdown('<div class="badge">🔵 AI Triage System</div>', unsafe_allow_html=True)
+st.title("Where should this patient go?")
+st.caption("Select symptoms present, rate their severity, then get a department recommendation.")
+st.divider()
+
+model = load_model()
+
+# =========================
+# STEP 1: SELECT SYMPTOMS
+# =========================
+st.subheader("Step 1 — Select symptoms")
+search = st.text_input("", placeholder="🔍  Search symptoms...", label_visibility="collapsed")
+filtered = [s for s in SYMPTOM_COLUMNS if search.lower().replace(" ", "_") in s] if search else SYMPTOM_COLUMNS
+
+cols = st.columns(3)
+selected = []
+for i, s in enumerate(filtered):
+    with cols[i % 3]:
+        if st.checkbox(label(s), key=f"chk_{s}"):
+            selected.append(s)
+
+# =========================
+# STEP 2: RATE SEVERITY
+# =========================
+symptom_values = {}
+
+if selected:
+    st.divider()
+    st.subheader("Step 2 — Rate severity")
+    st.caption("0.0 = mild  ·  1.0 = severe")
+    for s in selected:
+        symptom_values[s] = st.slider(
+            label(s), min_value=0.0, max_value=1.0,
+            value=0.5, step=0.01, key=f"slider_{s}"
         )
-    else:
-        # High confidence medical match panel
-        st.success(f"✅ **{final_routing}**")
-        st.metric(label="System Matching Certainty Score", value=f"{top_conf * 100:.2f}%")
-        
-    st.write("---")
-    
-    # --- RENDER DIFFERENTIAL DIAGNOSTICS TREE ---
-    st.markdown("#### 🔬 Automated Differential Diagnostics")
-    st.caption("Secondary alternative specialties calculated across the continuous index spectrum:")
-    
-    # Create simple dataframe layout for analytics scannability
-    diff_data = {
-        "Specialty Specialty": [item[0] for item in probability_map[1:4]],
-        "Confidence Probability": [f"{item[1]*100:.2f}%" for item in probability_map[1:4]]
-    }
-    st.table(pd.DataFrame(diff_data))
+    st.divider()
+
+    if st.button("🔍  Get recommendation", type="primary", use_container_width=True):
+        with st.spinner("Analyzing..."):
+            dept, confidence, safety_override, top_3 = predict(model, symptom_values)
+
+        icon = DEPT_ICONS.get(dept, "🏥")
+        pct = round(confidence * 100)
+        bar_color = "#059669" if pct >= 75 else "#2563eb" if pct >= 55 else "#d97706"
+
+        st.markdown(f"""
+        <div class="result-box">
+          <div style="display:flex; align-items:center; gap:14px; margin-bottom:1.2rem;">
+            <div style="font-size:36px;">{icon}</div>
+            <div>
+              <div class="dept-name">{dept}</div>
+              <div class="dept-sub">{"Safety fallback applied" if safety_override else "Recommended department"}</div>
+            </div>
+          </div>
+          <div style="font-size:12px; color:#64748b; margin-bottom:4px;">Model confidence</div>
+          <div style="background:#e2e8f0; border-radius:4px; height:8px; overflow:hidden; margin-bottom:4px;">
+            <div style="width:{pct}%; background:{bar_color}; height:100%; border-radius:4px;"></div>
+          </div>
+          <div style="font-size:13px; color:{bar_color}; font-weight:600; text-align:right;">{pct}%</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        if safety_override:
+            st.markdown('<div class="safety-box">⚠️ Low confidence — defaulted to General Medicine. Please review with a clinician.</div>', unsafe_allow_html=True)
+
+        st.markdown("#### Top alternatives")
+        rows = ""
+        for item in top_3:
+            p = round(item["probability"] * 100)
+            d_icon = DEPT_ICONS.get(item["department"], "🏥")
+            rows += f'<div class="top3-row"><span>{d_icon} <strong>{item["department"]}</strong></span><span class="top3-pct">{p}%</span></div>'
+        st.markdown(f'<div style="border:1px solid #e2e8f0; border-radius:10px; padding:4px 12px;">{rows}</div>', unsafe_allow_html=True)
+
+else:
+    st.info("☝️ Select at least one symptom above to continue.")
