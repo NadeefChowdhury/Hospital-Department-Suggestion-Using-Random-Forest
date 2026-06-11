@@ -164,7 +164,7 @@ if selected:
         icon = DEPT_ICONS.get(dept, "🏥")
         pct = round(confidence * 100)
         bar_color = "#059669" if pct >= 75 else "#2563eb" if pct >= 55 else "#d97706"
-        sub_text = "Low confidence — verify with a clinician" if low_confidence else "Recommended department"
+        sub_text = "Low confidence — visit General Medicine verify with a clinician" if low_confidence else "Recommended department"
 
         st.markdown(f"""
         <div class="result-box">
