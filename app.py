@@ -11,7 +11,7 @@ from sklearn.model_selection import train_test_split
 # =========================
 RANDOM_STATE = 42
 TEST_SIZE = 0.2
-CONFIDENCE_THRESHOLD = 0.55
+CONFIDENCE_THRESHOLD = 0.3
 MODEL_PATH = "model.pkl"
 DATA_PATH = "bangladesh_triage_dataset.csv"
 
