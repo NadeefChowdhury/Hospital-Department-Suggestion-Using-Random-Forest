@@ -62,20 +62,23 @@ def predict(model, symptom_values: dict):
     vector = np.zeros(len(SYMPTOM_COLUMNS))
     for s, v in symptom_values.items():
         vector[SYMPTOM_COLUMNS.index(s)] = v
+
     probs = model.predict_proba(vector.reshape(1, -1))[0]
     sorted_idx = np.argsort(probs)[::-1]
+
     max_idx = sorted_idx[0]
     max_prob = float(probs[max_idx])
     predicted = model.classes_[max_idx]
-    safety_override = False
-    if max_prob < CONFIDENCE_THRESHOLD:
-        predicted = "General Medicine"
-        safety_override = True
+
+    # Warn but never override — let the top prediction show
+    low_confidence = max_prob < CONFIDENCE_THRESHOLD
+
     top_3 = [
         {"department": model.classes_[i], "probability": round(float(probs[i]), 4)}
         for i in sorted_idx[:3]
     ]
-    return predicted, max_prob, safety_override, top_3
+
+    return predicted, max_prob, low_confidence, top_3
 
 
 # =========================
@@ -99,10 +102,10 @@ st.markdown("""
   }
   .dept-name { font-size: 28px; font-weight: 700; letter-spacing: -0.5px; margin: 0; }
   .dept-sub { color: #64748b; font-size: 14px; margin-top: 2px; }
-  .safety-box {
+  .low-conf-box {
     background: #fffbeb; border: 1px solid #fcd34d;
     border-radius: 8px; padding: 10px 14px;
-    font-size: 13px; color: #92400e; margin-top: 1rem;
+    font-size: 13px; color: #92400e; margin-top: 1rem; line-height: 1.6;
   }
   .top3-row {
     display: flex; justify-content: space-between; align-items: center;
@@ -112,6 +115,7 @@ st.markdown("""
   .top3-pct { color: #2563eb; font-weight: 600; font-family: monospace; }
 </style>
 """, unsafe_allow_html=True)
+
 
 # =========================
 # HEADER
@@ -155,11 +159,12 @@ if selected:
 
     if st.button("🔍  Get recommendation", type="primary", use_container_width=True):
         with st.spinner("Analyzing..."):
-            dept, confidence, safety_override, top_3 = predict(model, symptom_values)
+            dept, confidence, low_confidence, top_3 = predict(model, symptom_values)
 
         icon = DEPT_ICONS.get(dept, "🏥")
         pct = round(confidence * 100)
         bar_color = "#059669" if pct >= 75 else "#2563eb" if pct >= 55 else "#d97706"
+        sub_text = "Low confidence — verify with a clinician" if low_confidence else "Recommended department"
 
         st.markdown(f"""
         <div class="result-box">
@@ -167,7 +172,7 @@ if selected:
             <div style="font-size:36px;">{icon}</div>
             <div>
               <div class="dept-name">{dept}</div>
-              <div class="dept-sub">{"Safety fallback applied" if safety_override else "Recommended department"}</div>
+              <div class="dept-sub">{sub_text}</div>
             </div>
           </div>
           <div style="font-size:12px; color:#64748b; margin-bottom:4px;">Model confidence</div>
@@ -178,8 +183,13 @@ if selected:
         </div>
         """, unsafe_allow_html=True)
 
-        if safety_override:
-            st.markdown('<div class="safety-box">⚠️ Low confidence — defaulted to General Medicine. Please review with a clinician.</div>', unsafe_allow_html=True)
+        if low_confidence:
+            st.markdown(f"""
+            <div class="low-conf-box">
+              ⚠️ <strong>Low confidence ({pct}%)</strong> — this symptom combination is uncommon in the training data.
+              <strong>{dept}</strong> is the best guess, but please verify with a clinician before routing.
+            </div>
+            """, unsafe_allow_html=True)
 
         st.markdown("#### Top alternatives")
         rows = ""
